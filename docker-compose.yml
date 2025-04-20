@@ -1,8 +1,23 @@
+version: '3.8'
+
 services:
-  web:
-    build: .
-    ports:
-      - "8000:8000"
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     volumes:
       - .:/app
-    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+    restart: always
+    # Quyida `depends_on` qismi olib tashlandi, chunki Redis hozircha ishlatilmaydi
+    # Agar Redis kerak bo'lsa, quyidagi `redis` servis qismini qo'shing
+    # depends_on:
+    #   - redis
+
+  # Agar Redis kerak bo'lsa, quyidagi qismni qo'shing
+  # redis:
+  #   image: redis:latest
+  #   ports:
+  #     - "6379:6379"
+  #   restart: always

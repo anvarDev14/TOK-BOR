@@ -1,9 +1,11 @@
+version: '3.8'
+
 services:
   bot:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: weather_bot
+    container_name: TOK BOR
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
     volumes:
@@ -12,3 +14,10 @@ services:
 
 volumes:
   data:  # Ma'lumotlarni saqlash uchun nomlangan jild
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

@@ -1,0 +1,205 @@
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from google_utils import append_to_sheet, upload_to_drive
+import os
+import datetime
+import logging
+import traceback
+
+# Настройка логирования
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+# Состояния для ConversationHandler
+CONTACT_PERSON, CONTACT_PHONE, ADDRESS, CADASTRAL, TRANSFORMER, PHOTO, LOCATION = range(7)
+
+
+# Команда /start
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("start_handler ishga tushdi")
+    await update.message.reply_text("Введите контактное лицо:")
+    return CONTACT_PERSON
+
+
+# Обработка контактного лица
+async def contact_person(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("contact_person ishga tushdi")
+    context.user_data['contact_person'] = update.message.text
+    phone_button = KeyboardButton(text="Отправить номер телефона", request_contact=True)
+    reply_keyboard = [[phone_button]]
+    await update.message.reply_text(
+        "Отправьте контактный телефон:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+    )
+    return CONTACT_PHONE
+
+
+# Обработка контактного телефона
+async def contact_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("contact_phone ishga tushdi")
+    contact = update.message.contact
+    context.user_data['contact_phone'] = contact.phone_number
+    await update.message.reply_text("Введите адрес:")
+    return ADDRESS
+
+
+# Обработка адреса
+async def address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("address ishga tushdi")
+    context.user_data['address'] = update.message.text
+    await update.message.reply_text("Введите кадастровый номер:")
+    return CADASTRAL
+
+
+# Обработка кадастрового номера
+async def cadastral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("cadastral ishga tushdi")
+    context.user_data['cadastral'] = update.message.text
+    await update.message.reply_text("Введите данные о трансформаторе:")
+    return TRANSFORMER
+
+
+# Обработка данных о трансформаторе
+async def transformer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("transformer ishga tushdi")
+    context.user_data['transformer'] = update.message.text
+    await update.message.reply_text("Отправьте фотографию места:")
+    return PHOTO
+
+
+# Обработка фотографии
+async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        logger.debug("Rasmni qayta ishlash boshlandi...")
+        photo = update.message.photo[-1]
+        logger.debug(f"Rasm hajmi tanlandi: {photo.file_size} bayt")
+
+        file = await photo.get_file()
+        file_name = f"photo_{photo.file_id}.jpg"
+        logger.debug(f"Faylni yuklab olish boshlandi: {file_name}")
+
+        # Faylni yuklash
+        try:
+            await file.download_to_drive(file_name)
+            logger.debug(f"Fayl yuklandi: {file_name}")
+        except Exception as download_error:
+            logger.error(f"Faylni yuklab olishda xatolik: {str(download_error)}")
+            logger.error(f"Yuklash xatolik stack trace: {traceback.format_exc()}")
+            raise
+
+        # Fayl hajmini tekshirish
+        try:
+            file_size = os.path.getsize(file_name)
+            logger.debug(f"Fayl hajmi: {file_size} bayt")
+        except Exception as size_error:
+            logger.error(f"Fayl hajmini olishda xatolik: {str(size_error)}")
+            logger.error(f"Hajm olish xatolik stack trace: {traceback.format_exc()}")
+            raise
+
+        # Google Drive'ga yuklash
+        logger.debug("Google Drive'ga yuklash boshlandi...")
+        try:
+            photo_url = upload_to_drive(file_name, file_name)
+            context.user_data['photo_url'] = photo_url
+            logger.debug(f"Rasm Google Drive'ga yuklandi: {photo_url}")
+        except Exception as drive_error:
+            logger.error(f"Google Drive'ga yuklashda xatolik: {str(drive_error)}")
+            logger.error(f"Drive xatolik stack trace: {traceback.format_exc()}")
+            raise
+
+        # Удаление локального файла
+        logger.debug(f"Lokal faylni o'chirish: {file_name}")
+        try:
+            if os.path.exists(file_name):
+                os.remove(file_name)
+                logger.debug(f"Fayl o'chirildi: {file_name}")
+            else:
+                logger.warning(f"Fayl topilmadi: {file_name}")
+        except Exception as remove_error:
+            logger.error(f"Faylni o'chirishda xatolik: {str(remove_error)}")
+            logger.error(f"O'chirish xatolik stack trace: {traceback.format_exc()}")
+            raise
+
+        location_button = KeyboardButton(text="Отправить локацию", request_location=True)
+        reply_keyboard = [[location_button]]
+        await update.message.reply_text(
+            "Отправьте локацию:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+        )
+        return LOCATION
+    except Exception as e:
+        logger.error(f"Photo funksiyasida umumiy xatolik: {str(e)}")
+        logger.error(f"Umumiy xatolik stack trace: {traceback.format_exc()}")
+        await update.message.reply_text("Произошла ошибка при загрузке фото. Попробуйте снова с /start.")
+        return ConversationHandler.END
+
+
+# Обработка локации
+async def location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("location ishga tushdi")
+    location = update.message.location
+    # Lokaцияni Google Maps URL formatiga o'tkazish
+    latitude = location.latitude
+    longitude = location.longitude
+    google_maps_url = f"https://www.google.com/maps?q={latitude},{longitude}"
+    context.user_data['location'] = google_maps_url
+    logger.debug(f"Google Maps URL: {google_maps_url}")
+
+    # Joriy sana va vaqtni olish
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Сохранение всех данных в Google Sheets
+    values = [
+        current_time,  # Дата и время (A ustuni)
+        context.user_data['contact_person'],  # Контактное лицо (B ustuni)
+        context.user_data['contact_phone'],  # Контактный телефон (C ustuni)
+        context.user_data['address'],  # Адрес (D ustuni)
+        context.user_data['cadastral'],  # Кадастр (E ustuni)
+        context.user_data['transformer'],  # Трансформатор (F ustuni)
+        context.user_data.get('photo_url', ''),  # Фотография места (G ustuni)
+        context.user_data['location']  # Локация (H ustuni, Google Maps URL)
+    ]
+    append_to_sheet(values)
+
+    await update.message.reply_text("Данные успешно сохранены! Нажмите /start, чтобы начать заново.")
+    return ConversationHandler.END
+
+
+# Команда /cancel
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logger.debug("cancel_handler ishga tushdi")
+    await update.message.reply_text("Операция отменена. Нажмите /start, чтобы начать заново.")
+    return ConversationHandler.END
+
+
+# Обработка ошибок
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Xatolik haqida ma'lumotni log qilish
+    error = context.error
+    logger.error(f"Xatolik yuz berdi: {str(error)}")
+    logger.error(f"Xatolik stack trace: {traceback.format_exc()}")
+
+    # Foydalanuvchiga xatolik haqida aniqroq xabar berish
+    error_message = "Произошла ошибка. Попробуйте снова с /start."
+    if "timeout" in str(error).lower():
+        error_message = "Ошибка: Время ожидания истекло. Проверьте интернет-соединение и попробуйте снова с /start."
+    elif "network" in str(error).lower():
+        error_message = "Ошибка: Проблема с сетью. Проверьте интернет-соединение и попробуйте снова с /start."
+
+    await update.message.reply_text(error_message)
+
+
+# Регистрация ConversationHandler
+conversation_handler = ConversationHandler(
+    entry_points=[CommandHandler('start', start_handler)],
+    states={
+        CONTACT_PERSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, contact_person)],
+        CONTACT_PHONE: [MessageHandler(filters.CONTACT, contact_phone)],
+        ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, address)],
+        CADASTRAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, cadastral)],
+        TRANSFORMER: [MessageHandler(filters.TEXT & ~filters.COMMAND, transformer)],
+        PHOTO: [MessageHandler(filters.PHOTO, photo)],
+        LOCATION: [MessageHandler(filters.LOCATION, location)],
+    },
+    fallbacks=[CommandHandler('cancel', cancel_handler)]
+)
